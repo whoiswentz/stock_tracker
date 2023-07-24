@@ -1,7 +1,6 @@
 use chrono::prelude::*;
 use clap::{Args, Parser, Subcommand};
 use std::io::{Error, ErrorKind};
-use tokio_test;
 use yahoo::time::OffsetDateTime;
 use yahoo_finance_api as yahoo;
 
@@ -37,20 +36,38 @@ fn main() {
 
     if let Some(Commands::Fetch(fetch)) = cli.command {
         let symbols = split_symbols(&fetch.symbols);
-        let stocks = symbols
+        let _ = symbols
             .iter()
-            .map(|symbol| fetch_closing_data(symbol, &fetch.from, &fetch.to));
-        for stock in stocks {
-            match stock {
-                Ok(history_prices) => println!("{:?}", history_prices),
-                Err(error) => println!("{}", error),
-            }
-        }
+            .map(|&symbol| handle_symbol_data(symbol, &fetch.from, &fetch.to))
+            .collect::<Vec<_>>();
     }
 }
 
 fn split_symbols(symbols: &str) -> Vec<&str> {
     symbols.split(',').collect::<Vec<&str>>()
+}
+
+fn handle_symbol_data(symbol: &str, from: &DateTime<Utc>, to: &DateTime<Utc>) -> Option<Vec<f64>> {
+    let prices = fetch_closing_data(symbol, from, to).unwrap();
+
+    let last_price = prices.last().unwrap();
+    let (_, rel_diff) = price_diff(&prices).unwrap();
+    let period_min = min(&prices).unwrap();
+    let period_max = max(&prices).unwrap();
+    let windows = n_window(30, &prices).unwrap();
+
+    println!(
+        "{} - {}, {}, {}, {}, {}, {}",
+        from.to_rfc3339(),
+        symbol,
+        last_price,
+        rel_diff * 100.00,
+        period_min,
+        period_max,
+        windows.last().unwrap_or(&0.0)
+    );
+
+    Some(prices)
 }
 
 fn fetch_closing_data(
@@ -99,6 +116,19 @@ fn price_diff(series: &[f64]) -> Option<(f64, f64)> {
         let first = if *first == 0.0 { 1.0 } else { *first };
         let rel_diff = abs_diff / first;
         Some((abs_diff, rel_diff))
+    } else {
+        None
+    }
+}
+
+fn n_window(window_size: usize, series: &[f64]) -> Option<Vec<f64>> {
+    if !series.is_empty() && window_size > 1 {
+        Some(
+            series
+                .windows(window_size)
+                .map(|w| w.iter().sum::<f64>() / w.len() as f64)
+                .collect(),
+        )
     } else {
         None
     }
