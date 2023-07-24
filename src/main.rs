@@ -35,13 +35,22 @@ struct Fetch {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Some(Commands::Fetch(fetch)) => {
-            let a = fetch_closing_data("AAPL", &fetch.from, &fetch.to);
-            println!("{:?}", a)
+    if let Some(Commands::Fetch(fetch)) = cli.command {
+        let symbols = split_symbols(&fetch.symbols);
+        let stocks = symbols
+            .iter()
+            .map(|symbol| fetch_closing_data(symbol, &fetch.from, &fetch.to));
+        for stock in stocks {
+            match stock {
+                Ok(history_prices) => println!("{:?}", history_prices),
+                Err(error) => println!("{}", error),
+            }
         }
-        None => {}
     }
+}
+
+fn split_symbols(symbols: &str) -> Vec<&str> {
+    symbols.split(',').collect::<Vec<&str>>()
 }
 
 fn fetch_closing_data(
