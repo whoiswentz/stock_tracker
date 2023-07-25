@@ -1,6 +1,9 @@
 use chrono::prelude::*;
 use clap::{Args, Parser, Subcommand};
 use std::io::{Error, ErrorKind};
+use std::time::Duration;
+use tokio::task::JoinSet;
+use tokio::time;
 use yahoo::time::OffsetDateTime;
 use yahoo_finance_api as yahoo;
 
@@ -13,11 +16,11 @@ use yahoo_finance_api as yahoo;
 
 struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    sub_commands: Option<SubCommands>,
 }
 
 #[derive(Subcommand)]
-enum Commands {
+enum SubCommands {
     Fetch(Fetch),
 }
 
@@ -29,25 +32,46 @@ struct Fetch {
     to: DateTime<Utc>,
     #[arg(short = 's', long = "symbols")]
     symbols: String,
+    #[arg(short = 'd', long = "duration")]
+    duration: u64,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
+    match cli.sub_commands {
+        Some(SubCommands::Fetch(fetch)) => handle_fetch_sub_command(fetch).await,
+        None => panic!("no valid commands!"),
+    }
 
-    if let Some(Commands::Fetch(fetch)) = cli.command {
-        let symbols = split_symbols(&fetch.symbols);
-        let _ = symbols
+    Ok(())
+}
+
+async fn handle_fetch_sub_command(fetch: Fetch) {
+    let mut join_set: JoinSet<Option<Vec<f64>>> = JoinSet::new();
+    let symbols: Vec<&str> = fetch.symbols.split(',').collect();
+    let mut clock = time::interval(Duration::from_secs(fetch.duration));
+    loop {
+        clock.tick().await;
+        symbols
             .iter()
-            .map(|&symbol| handle_symbol_data(symbol, &fetch.from, &fetch.to))
+            .map(|&symbol| join_set.spawn(handle_symbol_data(symbol, &fetch.from, &fetch.to)))
             .collect::<Vec<_>>();
     }
+
+    // while let Some(stock) = join_set.join_next().await {
+    //     match stock {
+    //         Ok(_) => println!("processed"),
+    //         Err(err) => println!("{}", err),
+    //     }
+    // }
 }
 
-fn split_symbols(symbols: &str) -> Vec<&str> {
-    symbols.split(',').collect::<Vec<&str>>()
-}
-
-fn handle_symbol_data(symbol: &str, from: &DateTime<Utc>, to: &DateTime<Utc>) -> Option<Vec<f64>> {
+async fn handle_symbol_data(
+    symbol: &str,
+    from: &DateTime<Utc>,
+    to: &DateTime<Utc>,
+) -> Option<Vec<f64>> {
     let prices = fetch_closing_data(symbol, from, to).unwrap();
 
     let last_price = prices.last().unwrap();
