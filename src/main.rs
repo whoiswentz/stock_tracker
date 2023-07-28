@@ -1,9 +1,12 @@
 use chrono::prelude::*;
 use clap::{Args, Parser, Subcommand};
-use std::io::{Error, ErrorKind};
+use std::fs::File;
+use std::io::{BufRead, BufReader, Error, ErrorKind};
 use std::time::Duration;
+
+use tokio::io::AsyncReadExt;
 use tokio::task::JoinSet;
-use tokio::time;
+use tokio::time::{self, Interval};
 use yahoo::time::OffsetDateTime;
 use yahoo_finance_api as yahoo;
 
@@ -22,6 +25,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum SubCommands {
     Fetch(Fetch),
+    FetchFromFile(FetchFromFile),
 }
 
 #[derive(Args, Clone)]
@@ -34,33 +38,71 @@ struct Fetch {
     duration: u64,
 }
 
+#[derive(Args, Clone)]
+struct FetchFromFile {
+    #[arg(short = 'f', long = "from")]
+    from: DateTime<Utc>,
+    #[arg(short = 'p', long = "path")]
+    path: String,
+    #[arg(short = 'd', long = "duration")]
+    duration: u64,
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
 
+    let mut cli_fns = CliFn::new();
     match cli.sub_commands {
-        Some(SubCommands::Fetch(fetch)) => handle_fetch_sub_command(fetch).await,
+        Some(SubCommands::Fetch(fetch)) => cli_fns.handle_fetch_sub_command(fetch).await,
+        Some(SubCommands::FetchFromFile(fetch)) => {
+            cli_fns.handle_fetch_from_file_subcommand(fetch).await
+        }
         None => panic!("no valid commands!"),
     }
 
     Ok(())
 }
 
-async fn handle_fetch_sub_command(fetch: Fetch) {
-    let mut join_set: JoinSet<Option<Vec<f64>>> = JoinSet::new();
-    let symbols: Vec<String> = fetch.symbols.split(',').map(|i| i.into()).collect();
-    let mut clock = time::interval(Duration::from_secs(fetch.duration));
+struct CliFn {
+    pub join_set: JoinSet<Option<Vec<f64>>>,
+}
 
-    let to = Utc::now();
-    loop {
-        clock.tick().await;
-        let _ = symbols
-            .iter()
-            .cloned()
-            .map(|symbol| join_set.spawn(handle_symbol_data(symbol, fetch.from, to)))
-            .collect::<Vec<_>>();
+impl CliFn {
+    pub fn new() -> Self {
+        CliFn {
+            join_set: JoinSet::new(),
+        }
+    }
 
-        while let Some(stock) = join_set.join_next().await {
+    pub async fn handle_fetch_sub_command(&mut self, fetch: Fetch) {
+        let symbols: Vec<String> = fetch.symbols.split(',').map(|i| i.into()).collect();
+        let mut clock = time::interval(Duration::from_secs(fetch.duration));
+
+        let to = Utc::now();
+        loop {
+            clock.tick().await;
+            let _ = symbols
+                .iter()
+                .cloned()
+                .map(|symbol| {
+                    self.join_set
+                        .spawn(handle_symbol_data(symbol, fetch.from, to))
+                })
+                .collect::<Vec<_>>();
+
+            self.join().await;
+        }
+    }
+
+    pub async fn handle_fetch_from_file_subcommand(&mut self, fetch: FetchFromFile) {
+        let file = File::open(fetch.path).unwrap();
+        let buf = BufReader::new(file);
+        
+    }
+
+    async fn join(&mut self) {
+        while let Some(stock) = self.join_set.join_next().await {
             match stock {
                 Ok(_) => println!("processed"),
                 Err(err) => println!("{}", err),
