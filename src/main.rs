@@ -28,8 +28,6 @@ enum SubCommands {
 struct Fetch {
     #[arg(short = 'f', long = "from")]
     from: DateTime<Utc>,
-    #[arg(short = 't', long = "to")]
-    to: DateTime<Utc>,
     #[arg(short = 's', long = "symbols")]
     symbols: String,
     #[arg(short = 'd', long = "duration")]
@@ -39,6 +37,7 @@ struct Fetch {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
+
     match cli.sub_commands {
         Some(SubCommands::Fetch(fetch)) => handle_fetch_sub_command(fetch).await,
         None => panic!("no valid commands!"),
@@ -51,19 +50,23 @@ async fn handle_fetch_sub_command(fetch: Fetch) {
     let mut join_set: JoinSet<Option<Vec<f64>>> = JoinSet::new();
     let symbols: Vec<String> = fetch.symbols.split(',').map(|i| i.into()).collect();
     let mut clock = time::interval(Duration::from_secs(fetch.duration));
+
+    let to = Utc::now();
     loop {
         clock.tick().await;
-        for symbol in &symbols {
-            join_set.spawn(handle_symbol_data(symbol.clone(), fetch.from, fetch.to));
+        let _ = symbols
+            .iter()
+            .cloned()
+            .map(|symbol| join_set.spawn(handle_symbol_data(symbol, fetch.from, to)))
+            .collect::<Vec<_>>();
+
+        while let Some(stock) = join_set.join_next().await {
+            match stock {
+                Ok(_) => println!("processed"),
+                Err(err) => println!("{}", err),
+            }
         }
     }
-
-    // while let Some(stock) = join_set.join_next().await {
-    //     match stock {
-    //         Ok(_) => println!("processed"),
-    //         Err(err) => println!("{}", err),
-    //     }
-    // }
 }
 
 async fn handle_symbol_data(
@@ -71,13 +74,15 @@ async fn handle_symbol_data(
     from: DateTime<Utc>,
     to: DateTime<Utc>,
 ) -> Option<Vec<f64>> {
-    let prices = fetch_closing_data(symbol.as_str(), &from, &to).unwrap();
+    let prices = fetch_closing_data(symbol.as_str(), &from, &to)
+        .await
+        .unwrap();
 
     let last_price = prices.last().unwrap();
-    let (_, rel_diff) = price_diff(&prices).unwrap();
-    let period_min = min(&prices).unwrap();
-    let period_max = max(&prices).unwrap();
-    let windows = n_window(30, &prices).unwrap();
+    let (_, rel_diff) = price_diff(&prices).await.unwrap();
+    let period_min = min(&prices).await.unwrap();
+    let period_max = max(&prices).await.unwrap();
+    let windows = n_window(30, &prices).await.unwrap();
 
     println!(
         "{} - {}, {}, {}, {}, {}, {}",
@@ -93,7 +98,7 @@ async fn handle_symbol_data(
     Some(prices)
 }
 
-fn fetch_closing_data(
+async fn fetch_closing_data(
     symbol: &str,
     beginning: &DateTime<Utc>,
     end: &DateTime<Utc>,
@@ -103,7 +108,9 @@ fn fetch_closing_data(
     let beginning = OffsetDateTime::from_unix_timestamp(beginning.timestamp()).unwrap();
     let end = OffsetDateTime::from_unix_timestamp(end.timestamp()).unwrap();
 
-    let response = tokio_test::block_on(provider.get_quote_history(symbol, beginning, end))
+    let response = provider
+        .get_quote_history(symbol, beginning, end)
+        .await
         .map_err(|_| Error::from(ErrorKind::InvalidData))?;
     let mut quotes = response
         .quotes()
@@ -116,7 +123,7 @@ fn fetch_closing_data(
     }
 }
 
-fn min(series: &[f64]) -> Option<f64> {
+async fn min(series: &[f64]) -> Option<f64> {
     if series.is_empty() {
         None
     } else {
@@ -124,7 +131,7 @@ fn min(series: &[f64]) -> Option<f64> {
     }
 }
 
-fn max(series: &[f64]) -> Option<f64> {
+async fn max(series: &[f64]) -> Option<f64> {
     if series.is_empty() {
         None
     } else {
@@ -132,7 +139,7 @@ fn max(series: &[f64]) -> Option<f64> {
     }
 }
 
-fn price_diff(series: &[f64]) -> Option<(f64, f64)> {
+async fn price_diff(series: &[f64]) -> Option<(f64, f64)> {
     if !series.is_empty() {
         let (first, last) = (series.first().unwrap(), series.last().unwrap());
         let abs_diff = last - first;
@@ -144,7 +151,7 @@ fn price_diff(series: &[f64]) -> Option<(f64, f64)> {
     }
 }
 
-fn n_window(window_size: usize, series: &[f64]) -> Option<Vec<f64>> {
+async fn n_window(window_size: usize, series: &[f64]) -> Option<Vec<f64>> {
     if !series.is_empty() && window_size > 1 {
         Some(
             series
