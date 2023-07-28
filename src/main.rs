@@ -24,7 +24,7 @@ enum SubCommands {
     Fetch(Fetch),
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct Fetch {
     #[arg(short = 'f', long = "from")]
     from: DateTime<Utc>,
@@ -49,14 +49,13 @@ async fn main() -> std::io::Result<()> {
 
 async fn handle_fetch_sub_command(fetch: Fetch) {
     let mut join_set: JoinSet<Option<Vec<f64>>> = JoinSet::new();
-    let symbols: Vec<&str> = fetch.symbols.split(',').collect();
+    let symbols: Vec<String> = fetch.symbols.split(',').map(|i| i.into()).collect();
     let mut clock = time::interval(Duration::from_secs(fetch.duration));
     loop {
         clock.tick().await;
-        symbols
-            .iter()
-            .map(|&symbol| join_set.spawn(handle_symbol_data(symbol, &fetch.from, &fetch.to)))
-            .collect::<Vec<_>>();
+        for symbol in &symbols {
+            join_set.spawn(handle_symbol_data(symbol.clone(), fetch.from, fetch.to));
+        }
     }
 
     // while let Some(stock) = join_set.join_next().await {
@@ -68,11 +67,11 @@ async fn handle_fetch_sub_command(fetch: Fetch) {
 }
 
 async fn handle_symbol_data(
-    symbol: &str,
-    from: &DateTime<Utc>,
-    to: &DateTime<Utc>,
+    symbol: String,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
 ) -> Option<Vec<f64>> {
-    let prices = fetch_closing_data(symbol, from, to).unwrap();
+    let prices = fetch_closing_data(symbol.as_str(), &from, &to).unwrap();
 
     let last_price = prices.last().unwrap();
     let (_, rel_diff) = price_diff(&prices).unwrap();
