@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use clap::{Args, Parser, Subcommand};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Error, ErrorKind};
+use std::io::{BufRead, BufReader, Error, ErrorKind, Read};
 use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
@@ -96,9 +96,31 @@ impl CliFn {
     }
 
     pub async fn handle_fetch_from_file_subcommand(&mut self, fetch: FetchFromFile) {
-        let file = File::open(fetch.path).unwrap();
-        let buf = BufReader::new(file);
-        
+        let mut file = File::open(fetch.path).unwrap();
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer);
+
+        let symbols = buffer
+            .split(',')
+            .map(|s| s.trim().into())
+            .collect::<Vec<String>>();
+
+        let mut clock = time::interval(Duration::from_secs(fetch.duration));
+
+        let to = Utc::now();
+        loop {
+            clock.tick().await;
+            let _ = symbols
+                .iter()
+                .cloned()
+                .map(|symbol| {
+                    self.join_set
+                        .spawn(handle_symbol_data(symbol, fetch.from, to))
+                })
+                .collect::<Vec<_>>();
+
+            self.join().await;
+        }
     }
 
     async fn join(&mut self) {
