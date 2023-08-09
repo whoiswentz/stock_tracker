@@ -1,14 +1,17 @@
+use actix::prelude::*;
+use actix::System;
 use chrono::prelude::*;
 use clap::{Args, Parser, Subcommand};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind, Read};
 use std::time::Duration;
-
-use tokio::io::AsyncReadExt;
 use tokio::task::JoinSet;
-use tokio::time::{self, Interval};
+use tokio::time;
 use yahoo::time::OffsetDateTime;
 use yahoo_finance_api as yahoo;
+
+mod actors;
+mod finance;
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -48,9 +51,10 @@ struct FetchFromFile {
     duration: u64,
 }
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> std::io::Result<()> {
     let cli = Cli::parse();
+    let system = System::new();
 
     let mut cli_fns = CliFn::new();
     match cli.sub_commands {
