@@ -1,13 +1,8 @@
 use crate::finance::request::request_symbol_data;
-use actix::{
-    Actor, ActorFutureExt, AsyncContext, Context, Handler, Message, ResponseActFuture, WrapFuture,
-};
+use actix::{Actor, ActorFutureExt, Context, Handler, Message, ResponseActFuture, WrapFuture};
 use chrono::prelude::*;
-use std::time::Duration;
 
-pub struct Fetcher {
-    run_duration: u64,
-}
+pub struct Fetcher;
 
 #[derive(Message)]
 #[rtype(result = "Vec<f64>")]
@@ -18,10 +13,6 @@ pub struct StartFechting {
 
 impl Actor for Fetcher {
     type Context = Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.run_interval(Duration::from_secs(self.run_duration), |act, ctx| {});
-    }
 }
 
 impl Handler<StartFechting> for Fetcher {
