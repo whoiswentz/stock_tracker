@@ -3,35 +3,29 @@ use std::io::{Error, ErrorKind};
 use yahoo::time::OffsetDateTime;
 use yahoo_finance_api as yahoo;
 
-use crate::finance::operations::{max, min, n_window, price_diff};
+#[derive(Debug)]
+pub struct RequestSymbolDataResponse {
+    pub symbol: String,
+    pub prices: Vec<f64>,
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+}
 
 pub async fn request_symbol_data(
     symbol: String,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
-) -> Option<Vec<f64>> {
+) -> Option<RequestSymbolDataResponse> {
     let prices = request_closing_data(symbol.as_str(), &from, &to)
         .await
         .unwrap();
 
-    let last_price = prices.last().unwrap();
-    let (_, rel_diff) = price_diff(&prices).unwrap();
-    let period_min = min(&prices).unwrap();
-    let period_max = max(&prices).unwrap();
-    let windows = n_window(30, &prices).unwrap();
-
-    println!(
-        "{} - {}, {}, {}, {}, {}, {}",
-        from.to_rfc3339(),
+    Some(RequestSymbolDataResponse {
         symbol,
-        last_price,
-        rel_diff * 100.00,
-        period_min,
-        period_max,
-        windows.last().unwrap_or(&0.0)
-    );
-
-    Some(prices)
+        prices,
+        from,
+        to,
+    })
 }
 
 pub async fn request_closing_data(
