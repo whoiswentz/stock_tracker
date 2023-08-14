@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 pub fn min(series: &[f64]) -> Option<f64> {
     if series.is_empty() {
         None
@@ -37,4 +39,23 @@ pub fn n_window(window_size: usize, series: &[f64]) -> Option<Vec<f64>> {
     } else {
         None
     }
+}
+
+pub async fn calculate(symbol: String, from: DateTime<Utc>, prices: Vec<f64>) -> String {
+    let last_price = prices.last().unwrap();
+    let (_, rel_diff) = price_diff(&prices).unwrap();
+    let period_min = min(&prices).unwrap();
+    let period_max = max(&prices).unwrap();
+    let windows = n_window(30, &prices).unwrap();
+
+    [
+        symbol,
+        from.to_rfc3339(),
+        last_price.to_string(),
+        (rel_diff * 100.00).to_string(),
+        period_min.to_string(),
+        period_max.to_string(),
+        windows.last().unwrap_or(&0.0).to_string(),
+    ]
+    .join(",")
 }

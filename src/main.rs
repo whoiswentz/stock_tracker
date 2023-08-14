@@ -1,6 +1,7 @@
 use crate::actors::fetcher::{Fetcher, StartFechting};
 use crate::cmd::cli::{Cli, Fetch, SubCommands};
 use actix::prelude::*;
+use actors::calculator::{CalculateMessage, Calculator};
 use clap::Parser;
 use futures::future::try_join_all;
 
@@ -20,27 +21,33 @@ async fn main() {
 }
 
 async fn fetch_from_symbol(fetch: Fetch) {
-    let futs = fetch
+    let symbols = fetch
         .symbols
         .split(',')
         .map(|i| i.into())
-        .collect::<Vec<String>>()
-        .into_iter()
-        .map(|symbol| (symbol, Arbiter::new()))
-        .map(|(symbol, arb)| {
-            (
-                symbol,
-                Fetcher::start_in_arbiter(&arb.handle(), |_ctx| Fetcher),
-            )
+        .collect::<Vec<String>>();
+
+    let arb = Arbiter::new();
+    let futs = symbols.into_iter().map(|symbol| {
+        Supervisor::start_in_arbiter(&arb.handle(), |_ctx| Fetcher).send(StartFechting {
+            symbol,
+            from: fetch.from,
         })
-        .map(|(symbol, addr)| {
-            addr.send(StartFechting {
-                symbol,
-                from: fetch.from,
+    });
+
+    let request_symbol_data_responses = try_join_all(futs).await.unwrap();
+    println!("{:?}", request_symbol_data_responses);
+
+    let futs = request_symbol_data_responses
+        .into_iter()
+        .map(|request_symbol_data_response| {
+            Supervisor::start_in_arbiter(&arb.handle(), |_ctx| Calculator).send(CalculateMessage {
+                stock_data: request_symbol_data_response.prices,
+                symbol: request_symbol_data_response.symbol,
+                from: request_symbol_data_response.from,
             })
         });
 
-    let res = try_join_all(futs).await;
-
-    println!("{:?}", res)
+    let calculation_responses = try_join_all(futs).await.unwrap();
+    println!("{:?}", calculation_responses);
 }
